@@ -1,6 +1,10 @@
-# helm-clientgo-example
+# helm-clientgo go package
 
-This example program demonstrates helm operations for managing helm charts, such as adding helm repo, fetching helm charts and installing a helm chart
+This pakcage provide several functions for helm operations to manage helm charts and repo.
+- Add Helm chart repo
+- Update Helm chart repo
+- Install chart (download from repo)
+- Uninstall chart
 
 Running this example does the following operations:
 - Adds helm chart repo with name `stable` and url `https://kubernetes-charts.storage.googleapis.com`
