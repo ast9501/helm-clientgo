@@ -32,7 +32,7 @@ var helmLogger = logf.Log.WithName("helm")
 var settings *cli.EnvSettings
 
 // RepoAdd adds repo with given name and url
-func RepoAdd(name, url string) {
+func RepoAdd(name, url string) error {
 
 	settings = cli.New()
 	repoFile := settings.RepositoryConfig
@@ -40,7 +40,7 @@ func RepoAdd(name, url string) {
 	//Ensure the file directory exists as it is required for file locking
 	err := os.MkdirAll(filepath.Dir(repoFile), os.ModePerm)
 	if err != nil && !os.IsExist(err) {
-		log.Fatal(err)
+		return err
 	}
 
 	// Acquire a file lock for process synchronization
@@ -52,22 +52,22 @@ func RepoAdd(name, url string) {
 		defer fileLock.Unlock()
 	}
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	b, err := ioutil.ReadFile(repoFile)
 	if err != nil && !os.IsNotExist(err) {
-		log.Fatal(err)
+		return err
 	}
 
 	var f repo.File
 	if err := yaml.Unmarshal(b, &f); err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	if f.Has(name) {
-		fmt.Printf("repository name (%s) already exists\n", name)
-		return
+		// repository name already exist
+		return nil
 	}
 
 	c := repo.Entry{
@@ -77,40 +77,42 @@ func RepoAdd(name, url string) {
 
 	r, err := repo.NewChartRepository(&c, getter.All(settings))
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	if _, err := r.DownloadIndexFile(); err != nil {
 		err := errors.Wrapf(err, "looks like %q is not a valid chart repository or cannot be reached", url)
-		log.Fatal(err)
+		return err
 	}
 
 	f.Update(&c)
 
 	if err := f.WriteFile(repoFile, 0644); err != nil {
-		log.Fatal(err)
+		return err
 	}
-	fmt.Printf("%q has been added to your repositories\n", name)
+	//fmt.Printf("%q has been added to your repositories\n", name)
+	return nil
 }
 
 // RepoUpdate updates charts for all helm repos
-func RepoUpdate() {
+func RepoUpdate() error {
 	repoFile := settings.RepositoryConfig
 
 	f, err := repo.LoadFile(repoFile)
 	if os.IsNotExist(errors.Cause(err)) || len(f.Repositories) == 0 {
-		log.Fatal(errors.New("no repositories found. You must add one before updating"))
+		//log.Fatal(errors.New("no repositories found. You must add one before updating"))
+		return err
 	}
 	var repos []*repo.ChartRepository
 	for _, cfg := range f.Repositories {
 		r, err := repo.NewChartRepository(cfg, getter.All(settings))
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		repos = append(repos, r)
 	}
 
-	fmt.Printf("Hang tight while we grab the latest from your chart repositories...\n")
+	//fmt.Printf("Hang tight while we grab the latest from your chart repositories...\n")
 	var wg sync.WaitGroup
 	for _, re := range repos {
 		wg.Add(1)
@@ -118,23 +120,27 @@ func RepoUpdate() {
 			defer wg.Done()
 			if _, err := re.DownloadIndexFile(); err != nil {
 				fmt.Printf("...Unable to get an update from the %q chart repository (%s):\n\t%s\n", re.Config.Name, re.Config.URL, err)
-			} else {
-				fmt.Printf("...Successfully got an update from the %q chart repository\n", re.Config.Name)
 			}
+			/*
+				else {
+					fmt.Printf("...Successfully got an update from the %q chart repository\n", re.Config.Name)
+				}
+			*/
 		}(re)
 	}
 	wg.Wait()
-	fmt.Printf("Update Complete. ⎈ Happy Helming!⎈\n")
+	//fmt.Printf("Update Complete. ⎈ Happy Helming!⎈\n")
+	return nil
 }
 
 //func InstallHelmChart(name, namespace, repo, chartName )
 
 // InstallChart
-func InstallChart(name, namespace, repo, chart, chartVersion string, args map[string]string) {
+func InstallChart(name, namespace, repo, chart, chartVersion string, args map[string]string) error {
 
 	actionConfig, err := newHelmConfiguration(namespace)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	client := action.NewInstall(actionConfig)
 
@@ -149,7 +155,7 @@ func InstallChart(name, namespace, repo, chart, chartVersion string, args map[st
 	client.ReleaseName = name
 	cp, err := client.ChartPathOptions.LocateChart(fmt.Sprintf("%s/%s", repo, chart), settings)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	helmDebugLog("CHART PATH: %s\n", cp)
@@ -158,23 +164,24 @@ func InstallChart(name, namespace, repo, chart, chartVersion string, args map[st
 	valueOpts := &values.Options{}
 	vals, err := valueOpts.MergeValues(p)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	// Add args
 	if err := strvals.ParseInto(args["set"], vals); err != nil {
 		log.Fatal(errors.Wrap(err, "failed parsing --set data"))
+		return err
 	}
 
 	// Check chart dependencies to make sure all are present in /charts
 	chartRequested, err := loader.Load(cp)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	validInstallableChart, err := isChartInstallable(chartRequested)
 	if !validInstallableChart {
-		log.Fatal(err)
+		return err
 	}
 
 	if req := chartRequested.Metadata.Dependencies; req != nil {
@@ -193,21 +200,20 @@ func InstallChart(name, namespace, repo, chart, chartVersion string, args map[st
 					RepositoryCache:  settings.RepositoryCache,
 				}
 				if err := man.Update(); err != nil {
-					log.Fatal(err)
+					return err
 				}
 			} else {
-				log.Fatal(err)
+				return err
 			}
 		}
 	}
 
 	client.Namespace = namespace
-	release, err := client.Run(chartRequested, vals)
+	_, err = client.Run(chartRequested, vals)
 	if err != nil {
-		log.Fatal(err)
-	} else {
-		log.Println(release.Manifest)
+		return err
 	}
+	return nil
 }
 
 // UninstallHelmChart uninstalls the given Helm chart name
